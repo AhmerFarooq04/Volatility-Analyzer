@@ -6,6 +6,7 @@ required (macOS provides one; CI needs Xvfb).
 """
 
 import csv
+import gc
 import time
 import tkinter as tk
 from unittest.mock import MagicMock, patch
@@ -60,11 +61,21 @@ class _SynchronousThread:
 # Fixtures
 # ---------------------------------------------------------------------------
 
+@pytest.fixture(autouse=True)
+def collect_tk_objects_on_main_thread():
+    """Release destroyed GUI cycles before later worker-thread tests can collect them."""
+    yield
+    gc.collect()
+
+
 @pytest.fixture
 def tk_app():
     """Create a real EarningsTkApp with all network I/O mocked out."""
     with patch("earnings_calculator.gui.update_otc_tickers"):
-        root = tk.Tk()
+        try:
+            root = tk.Tk()
+        except tk.TclError:
+            pytest.skip("Tk display unavailable")
         root.withdraw()
         app = EarningsTkApp(root)
     yield app
@@ -99,10 +110,9 @@ class TestInitialization:
         cols = tk_app.tree["columns"]
         assert len(cols) == 18
 
-    def test_initial_proxy_status(self, tk_app):
-        """Start with direct connections until the user enables proxies."""
-        assert tk_app.lbl_proxy_status.cget("text") == "Disabled (0 proxies)"
-        assert tk_app.proxy_var.get() is False
+    def test_proxy_controls_removed(self, tk_app):
+        assert not hasattr(tk_app, "proxy_var")
+        assert not hasattr(tk_app, "proxy_manager")
 
     def test_table_columns_match_headings(self, tk_app):
         """All 18 column headings present and in order."""
@@ -154,7 +164,7 @@ class TestSingleStockAnalysis:
         tk_app.on_analyze_stock()
         pump_events(tk_app.root)
         assert len(get_table_rows(tk_app)) == 0
-        assert "complete" in tk_app.lbl_status.cget("text").lower()
+        assert "unavailable" in tk_app.lbl_status.cget("text").lower()
 
     def test_analyze_stock_uppercases_symbol(
         self, tk_app, sync_threads, analyze_stock_result
@@ -421,7 +431,7 @@ class TestDoubleClickChart:
         with patch("earnings_calculator.gui.show_interactive_chart") as mock_chart:
             event = MagicMock()
             tk_app.on_table_double_click(event)
-            mock_chart.assert_called_once_with("AAPL", tk_app.analyzer.session_manager)
+            mock_chart.assert_called_once_with("AAPL")
 
     def test_double_click_no_selection(self, tk_app):
         """Double-click empty table -> chart not called."""
@@ -435,27 +445,6 @@ class TestDoubleClickChart:
 # I. Proxy Toggle
 # ===================================================================
 
-class TestProxyToggle:
-    def test_toggle_proxy_off(self, tk_app):
-        """Uncheck proxy -> 'Disabled (0 proxies)'."""
-        tk_app.proxy_var.set(False)
-        tk_app.on_toggle_proxy()
-        assert tk_app.lbl_proxy_status.cget("text") == "Disabled (0 proxies)"
-
-    def test_toggle_proxy_on(self, tk_app):
-        """Check proxy -> 'Enabled (N proxies)'."""
-        tk_app.proxy_var.set(False)
-        tk_app.on_toggle_proxy()
-        tk_app.proxy_var.set(True)
-        tk_app.on_toggle_proxy()
-        text = tk_app.lbl_proxy_status.cget("text")
-        assert text.startswith("Enabled (")
-        assert "proxies)" in text
-
-
-# ===================================================================
-# J. Exit
-# ===================================================================
 
 class TestExit:
     def test_exit_button(self, tk_app):

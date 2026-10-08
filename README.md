@@ -47,9 +47,9 @@ This project was inspired by research indicating that **shorting volatility duri
 - **Tkinter-Based GUI**  
   - Table with sortable columns, color-coded rows, filtering options, and direct CSV export.
 
-- **Proxy & Multi-Threaded Support**  
-  - Optional proxy rotation for fetching data.  
-  - Concurrent requests for earnings scanning to speed up data collection.
+- **Paced market data**
+  - Shared Yahoo request pacing, persistent budgets and cooldowns.
+  - Completed daily history is cached for reuse; scans run sequentially.
 
 - **Options Analysis**  
   - Computes 30-day realized volatility (Yang-Zhang or fallback method).  
@@ -207,10 +207,6 @@ review `git diff`, then stage the intended files, commit, and run `git push orig
 
 ## Configuration & Customization
 
-- **Proxy Usage**  
-  - Enable or disable proxies via the **“Enable Proxy”** checkbox.  
-  - Use **“Update Proxies”** to fetch a new list of free proxies.  
-
 - **Logging & Debug**  
   - Debug logs are written to files (e.g., `options_analyzer_debug.log`).  
 
@@ -220,8 +216,8 @@ review `git diff`, then stage the intended files, commit, and run `git push orig
 
 1. **“No module named tkcalendar”**  
    - Install with `pip install tkcalendar`.
-2. **No Internet Access or Proxy Failures**  
-   - Disable proxy in the GUI or verify you have a valid network connection.  
+2. **Network or Rate-Limit Failures**
+   - Check your network connection. A rate-limit pause must expire before new Yahoo requests can run.
 3. **Missing Data or “N/A”**  
    - Some stocks may lack options or have incomplete data.  
 
@@ -266,7 +262,65 @@ These are earnings release sessions, not exact conference-call times.
 
 The Nasdaq calendar replaces the blocked Investing.com scraper. Calendar
 failures appear as `Scan failed` instead of being reported as no earnings.
-Each scan downloads fresh price history and only runs options analysis for
+Each scan checks completed daily history and only runs options analysis for
 stocks with a mean volume of at least 1,500,000 shares over 30 trading sessions.
 Stocks without sufficient history are skipped. Scan results do not reuse the
-old seven-day analysis cache. Single-symbol analysis remains available.
+old seven-day analysis cache. Completed daily price history is cached and shared with charts and monthly screening. Single-symbol analysis remains available.
+
+
+## Rate limits and monthly CSV
+
+Proxy controls and rotation have been removed from the application. Yahoo
+requests use one shared paced session. The local defaults are a minimum of
+3 seconds between request dispatches, at most 120 in a rolling hour and 500
+in a rolling 24 hours. The budget is stored under `runtime_data/`, so restarting
+the app or running a second monthly process does not reset it. Cookies and
+crumb requests use the same session. These are local safeguards, not a Yahoo
+quota guarantee; internal redirects can add traffic. Any detected Yahoo 429
+or `YFRateLimitError` stops Yahoo requests for at least one hour, respecting
+longer numeric Retry-After values. Do not delete the budget database to retry.
+
+Build or resume this month's screening file:
+
+```powershell
+..\venv\Scripts\python.exe -m earnings_calculator.monthly
+```
+
+The GUI also provides **Refresh Monthly CSV**. A run processes up to 50 new
+symbols and saves checkpoints. Rerunning resumes without repeating successful
+calendar/volume checks. It does not fetch options. `monthly_earnings.csv`
+contains every company supplied by the calendar (including the next month's first trading morning for boundary coverage), volume status, release date
+and session, and `analysis_date`, `run_after_et`, `run_before_et`. The window is
+the last 30 minutes before the relevant NYSE session closes, including early
+closes. Pre-market releases use the preceding trading session. Unknown release
+times have no analysis window. The window is a scheduling convention, not a
+trade instruction. Dates supplied by the provider can change.
+
+`monthly_earnings.meta.json` declares whether the CSV is complete. Partial
+files mark unprocessed rows `needs_data` and are never treated as a complete
+shortlist. An old completed CSV is atomically replaced only after its
+replacement completes; a failed refresh preserves it. The month check prevents
+using last month's shortlist for this month's scan. The monthly screen is a
+snapshot and can miss stocks whose volume increases later; use **--refresh**
+to rebuild it. Daily analysis rechecks volume on the shortlisted stocks.
+
+Install automatic monthly upkeep on another Windows installation:
+
+```powershell
+.\scripts\install-monthly-task.ps1
+```
+
+The task is named `VolatilityAnalyzer-MonthlyEarnings`. It starts at the next
+7 AM in Windows local time and checks every two hours while your account is
+logged in. The first check each new month starts a new file; subsequent checks
+resume incomplete work. Once that month's file is complete, checks make no
+market-data requests. Offline/asleep computers run when available. Logs go to
+`monthly_refresh.log`. Market-data budgets can spread a large month across
+several runs or days. Remove the task with:
+
+```powershell
+Unregister-ScheduledTask -TaskName VolatilityAnalyzer-MonthlyEarnings -Confirm:$false
+```
+
+See [MATH_AUDIT.md](MATH_AUDIT.md) for formulas, numeric tests and the sandbox
+consumer contract. No component submits orders or connects to a broker.

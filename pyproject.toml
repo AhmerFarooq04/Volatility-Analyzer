@@ -4,7 +4,7 @@ version = "1.0.0"
 description = "Analyzes options data around earnings events, calculates volatility metrics, and provides trade recommendations"
 requires-python = ">=3.10"
 dependencies = [
-    "beautifulsoup4>=4.14",
+    "exchange-calendars>=4.5",
     "curl-cffi>=0.15,<0.16",
     "matplotlib>=3.10",
     "mplfinance>=0.12",

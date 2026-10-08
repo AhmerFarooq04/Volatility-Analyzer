@@ -384,3 +384,7 @@ $RECYCLE.BIN/
 *.lnk
 
 # End of https://www.toptal.com/developers/gitignore/api/python,pycharm,visualstudiocode,linux,macos,windows
+# Paced market data and monthly screening output
+runtime_data/
+monthly_earnings.csv
+monthly_earnings.meta.json

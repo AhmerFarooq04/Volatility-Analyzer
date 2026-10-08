@@ -1,4 +1,5 @@
 """Calendar provider contract and failure handling."""
+
 from unittest.mock import MagicMock, patch
 import pytest
 from earnings_calculator.calendar import EarningsCalendarFetcher, EarningsCalendarError
@@ -12,12 +13,14 @@ def session_for(rows):
 
 def test_timing_and_date_isolation():
     fetcher = EarningsCalendarFetcher()
-    session = session_for([
-        {"symbol": "AAPL", "time": "time-after-hours"},
-        {"symbol": "MSFT", "time": "time-pre-market"},
-        {"symbol": "TSLA", "time": "time-not-supplied"},
-    ])
-    with patch.object(fetcher.session_manager, "get_session", return_value=session):
+    session = session_for(
+        [
+            {"symbol": "AAPL", "time": "time-after-hours"},
+            {"symbol": "MSFT", "time": "time-pre-market"},
+            {"symbol": "TSLA", "time": "time-not-supplied"},
+        ]
+    )
+    with patch.object(fetcher, "session", session):
         assert fetcher.fetch_earnings_data("2026-10-08") == ["AAPL", "MSFT", "TSLA"]
         session.get.return_value.json.return_value = {"data": {"rows": []}}
         assert fetcher.fetch_earnings_data("2026-10-09") == []
@@ -31,7 +34,7 @@ def test_timing_and_date_isolation():
 @pytest.mark.parametrize("rows", [[], None])
 def test_empty_calendar(rows):
     fetcher = EarningsCalendarFetcher()
-    with patch.object(fetcher.session_manager, "get_session", return_value=session_for(rows)):
+    with patch.object(fetcher, "session", session_for(rows)):
         assert fetcher.fetch_earnings_data("2026-10-08") == []
 
 
@@ -39,7 +42,7 @@ def test_provider_failure_is_not_empty_calendar():
     fetcher = EarningsCalendarFetcher()
     session = MagicMock()
     session.get.side_effect = RuntimeError("HTTP 403")
-    with patch.object(fetcher.session_manager, "get_session", return_value=session):
+    with patch.object(fetcher, "session", session):
         with pytest.raises(EarningsCalendarError, match="HTTP 403"):
             fetcher.fetch_earnings_data("2026-10-08")
     assert session.get.call_count == 2
@@ -49,6 +52,16 @@ def test_invalid_payload_is_failure():
     fetcher = EarningsCalendarFetcher()
     session = session_for([])
     session.get.return_value.json.return_value = {"data": None}
-    with patch.object(fetcher.session_manager, "get_session", return_value=session):
+    with patch.object(fetcher, "session", session):
         with pytest.raises(EarningsCalendarError):
             fetcher.fetch_earnings_data("2026-10-08")
+
+
+def test_us_share_class_symbols_are_yahoo_compatible():
+    fetcher = EarningsCalendarFetcher()
+    with patch.object(
+        fetcher,
+        "session",
+        session_for([{"symbol": "BRK.B", "time": "time-pre-market"}]),
+    ):
+        assert fetcher.fetch_earnings_data("2026-10-08") == ["BRK-B"]

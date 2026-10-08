@@ -1,6 +1,5 @@
 """Earnings scanning orchestration and OTC ticker updater."""
 
-import concurrent.futures
 import os
 import tempfile
 from datetime import datetime, timedelta
@@ -8,11 +7,16 @@ from typing import Callable, Dict, List, Optional
 
 import pandas as pd
 import requests
-import yfinance as yf
+from yfinance.exceptions import YFRateLimitError
+from earnings_calculator.market_data import price_history, stop_on_rate_limit
 
 from earnings_calculator.calendar import EarningsCalendarFetcher
 from earnings_calculator.logging_config import create_logger
-from earnings_calculator.options import OptionsAnalyzer, MIN_AVG_VOLUME, IV_INTERPOLATION_DTE
+from earnings_calculator.options import (
+    OptionsAnalyzer,
+    MIN_AVG_VOLUME,
+    IV_INTERPOLATION_DTE,
+)
 
 MIN_IV30_RV30_RATIO = 1.25
 MAX_TERM_SLOPE = -0.00406
@@ -44,7 +48,9 @@ def update_otc_tickers():
         while True:
             params["p"] = page
             # Added timeout to prevent thread hanging
-            response = requests.get(base_url, headers=headers, params=params, timeout=10)
+            response = requests.get(
+                base_url, headers=headers, params=params, timeout=10
+            )
             response.raise_for_status()
             data = response.json()
             page_data = data.get("data", {}).get("data", [])
@@ -54,7 +60,9 @@ def update_otc_tickers():
 
             for item in page_data:
                 full_symbol = item.get("s", "")
-                ticker = full_symbol.split("/")[-1] if "/" in full_symbol else full_symbol
+                ticker = (
+                    full_symbol.split("/")[-1] if "/" in full_symbol else full_symbol
+                )
                 all_tickers.append(ticker)
 
             print(f"Processed page {page}")
@@ -62,7 +70,9 @@ def update_otc_tickers():
 
         # Only overwrite the file if we actually successfully fetched data
         if all_tickers:
-            with tempfile.NamedTemporaryFile(mode="w", suffix=".tmp", dir=".", delete=False) as tmp:
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".tmp", dir=".", delete=False
+            ) as tmp:
                 for ticker in all_tickers:
                     tmp.write(f"{ticker}\n")
                 tmp_path = tmp.name
@@ -70,54 +80,45 @@ def update_otc_tickers():
             print("Total OTC tickers count:", len(all_tickers))
             print("OTC tickers have been written to otc-tickers.txt")
         else:
-            print("Warning: API returned no OTC tickers. Keeping existing otc-tickers.txt if it exists.")
+            print(
+                "Warning: API returned no OTC tickers. Keeping existing otc-tickers.txt if it exists."
+            )
 
     except requests.exceptions.RequestException as e:
         print(f"Network error updating OTC tickers (API may have changed): {e}")
-        print("Skipping OTC update. The app will continue using cached otc-tickers.txt if available.")
+        print(
+            "Skipping OTC update. The app will continue using cached otc-tickers.txt if available."
+        )
     except Exception as e:
         print(f"Unexpected error updating OTC tickers: {e}")
-        print("Skipping OTC update. The app will continue using cached otc-tickers.txt if available.")
+        print(
+            "Skipping OTC update. The app will continue using cached otc-tickers.txt if available."
+        )
 
 
 class EnhancedEarningsScanner:
     def __init__(self, analyzer: OptionsAnalyzer):
         self.analyzer = analyzer
-        self.calendar_fetcher = EarningsCalendarFetcher(self.analyzer.proxy_manager)
+        self.calendar_fetcher = EarningsCalendarFetcher()
         self.batch_size = 10
         self.logger = create_logger(
             "EnhancedEarningsScanner", "earnings_scanner_debug.log"
         )
 
     def batch_download_history(self, tickers: List[str]) -> Dict[str, pd.DataFrame]:
-        ticker_str = " ".join(tickers)
-        try:
-            data = yf.download(
-                tickers=ticker_str,
-                period="1y",
-                group_by="ticker",
-                auto_adjust=True,
-                prepost=True,
-                threads=True,
-                progress=False,
-            )
-            res = {}
-            for tk in tickers:
-                try:
-                    if isinstance(data.columns, pd.MultiIndex):
-                        df = data.xs(tk, axis=1, level=0)
-                    else:
-                        df = data
-                    df = df.dropna(subset=["Close", "Open", "High", "Low"])
-                    if not df.empty:
-                        res[tk] = df
-                except Exception as e:
-                    self.logger.debug(f"Could not extract data for {tk}: {e}")
-                    continue
-            return res
-        except Exception as e:
-            self.logger.error(f"batch download error: {e}")
-            return {}
+        results = {}
+        for ticker in tickers:
+            try:
+                history = price_history(ticker, ticker=self.analyzer.get_ticker(ticker))
+                if not history.empty:
+                    results[ticker] = history.dropna(
+                        subset=["Open", "High", "Low", "Close"]
+                    )
+            except YFRateLimitError as exc:
+                stop_on_rate_limit(exc)
+            except Exception as exc:
+                self.logger.warning("History unavailable for %s: %s", ticker, exc)
+        return results
 
     def scan_earnings_date_range(
         self,
@@ -156,65 +157,56 @@ class EnhancedEarningsScanner:
     def scan_overnight_earnings(self, date: datetime, progress_callback=None):
         """Analyze tonight's releases and the following calendar morning's releases."""
         results = []
-        for idx, (day, timing) in enumerate([
-            (date, "Post Market"), (date + timedelta(days=1), "Pre Market")
-        ]):
+        for idx, (day, timing) in enumerate(
+            [(date, "Post Market"), (date + timedelta(days=1), "Pre Market")]
+        ):
+
             def progress(value, offset=idx):
                 if progress_callback:
                     progress_callback(offset * 50 + value / 2)
+
             results.extend(self.scan_earnings_stocks(day, progress, timing))
         return results
 
-    def scan_earnings_stocks(self, date: datetime, progress_callback=None,
-                             earnings_time=None) -> List[Dict]:
+    def scan_earnings_stocks(
+        self, date: datetime, progress_callback=None, earnings_time=None
+    ) -> List[Dict]:
         """Use fresh history to filter liquidity before requesting options data."""
         ds = date.strftime("%Y-%m-%d")
-        tickers = self.calendar_fetcher.fetch_earnings_data(ds)
-        timings = {tk: self.calendar_fetcher.get_earnings_time(tk, ds) for tk in tickers}
+        from earnings_calculator.monthly import MonthlyEarningsCache
+
+        planned = MonthlyEarningsCache().events_for_date(ds)
+        if planned is None:
+            tickers = self.calendar_fetcher.fetch_earnings_data(ds)
+            timings = {
+                tk: self.calendar_fetcher.get_earnings_time(tk, ds) for tk in tickers
+            }
+        else:
+            tickers = [row["ticker"] for row in planned]
+            timings = {row["ticker"]: row["earnings_time"] for row in planned}
         try:
             with open("otc-tickers.txt") as stream:
                 otc = {line.strip().upper() for line in stream}
         except FileNotFoundError:
             otc = set()
-        tickers = [tk for tk in tickers if tk not in otc and
-                   (earnings_time is None or timings[tk] == earnings_time)]
+        tickers = [
+            tk
+            for tk in tickers
+            if tk not in otc and (earnings_time is None or timings[tk] == earnings_time)
+        ]
         results = []
-        done = 0
-        for offset in range(0, len(tickers), self.batch_size):
-            batch = tickers[offset:offset + self.batch_size]
-            histories = self.batch_download_history(batch)
-            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-                futures = {}
-                for ticker in batch:
-                    history = histories.get(ticker)
-                    if history is None or history.empty:
-                        try:
-                            history = self.analyzer.get_ticker(ticker).history(period="1y")
-                        except Exception:
-                            self.logger.exception("Could not retrieve history for %s", ticker)
-                            history = None
-                    volume = (history["Volume"].rolling(IV_INTERPOLATION_DTE).mean().iloc[-1]
-                              if history is not None and not history.empty and
-                              "Volume" in history else float("nan"))
-                    if pd.notna(volume) and volume >= MIN_AVG_VOLUME:
-                        futures[executor.submit(self.analyze_stock, ticker, history,
-                                                earnings_date=ds,
-                                                earnings_time=timings[ticker])] = ticker
-                    else:
-                        done += 1
-                        self.logger.info("Skipping %s: insufficient 30-session volume", ticker)
-                        if progress_callback:
-                            progress_callback(done / len(tickers) * 100)
-                for future in concurrent.futures.as_completed(futures):
-                    done += 1
-                    try:
-                        result = future.result()
-                        if result:
-                            results.append(result)
-                    except Exception:
-                        self.logger.exception("Analysis failed for %s", futures[future])
-                    if progress_callback:
-                        progress_callback(done / len(tickers) * 100)
+        for idx, ticker in enumerate(tickers):
+            history = self.batch_download_history([ticker]).get(ticker)
+            if history is not None and not history.empty:
+                volume = history["Volume"].rolling(IV_INTERPOLATION_DTE).mean().iloc[-1]
+                if pd.notna(volume) and volume >= MIN_AVG_VOLUME:
+                    result = self.analyze_stock(
+                        ticker, history, earnings_date=ds, earnings_time=timings[ticker]
+                    )
+                    if result:
+                        results.append(result)
+            if progress_callback:
+                progress_callback((idx + 1) / len(tickers) * 100)
         results.sort(key=lambda r: (r["recommendation"] != "Recommended", r["ticker"]))
         if progress_callback:
             progress_callback(100)
@@ -230,8 +222,9 @@ class EnhancedEarningsScanner:
     ) -> Optional[Dict]:
         try:
             st2 = self.analyzer.get_ticker(ticker)
+            info = st2.info if not earnings_date else {}
             if not skip_otc_check:
-                exchange = st2.info.get("exchange", "")
+                exchange = info.get("exchange", "")
                 otc_exchanges = {"PNK", "Other OTC", "OTC", "GREY"}
                 if exchange in otc_exchanges:
                     self.logger.info(
@@ -239,22 +232,24 @@ class EnhancedEarningsScanner:
                     )
                     return None
             if history_data is None or history_data.empty:
-                hd = st2.history(period="1y")
-                if hd.empty:
-                    hd = st2.history(period="1mo")
+                hd = price_history(ticker, ticker=st2)
                 if hd.empty:
                     self.logger.warning(f"No data for {ticker}; skipping.")
                     return None
                 history_data = hd.dropna(subset=["Close", "Open", "High", "Low"])
                 if history_data.empty:
-                    self.logger.warning(f"No valid data after dropna for {ticker}; skipping.")
+                    self.logger.warning(
+                        f"No valid data after dropna for {ticker}; skipping."
+                    )
                     return None
 
             if isinstance(history_data.columns, pd.MultiIndex):
                 history_data = history_data.copy()
                 for level in range(history_data.columns.nlevels):
                     if "Close" in history_data.columns.get_level_values(level):
-                        history_data.columns = history_data.columns.get_level_values(level)
+                        history_data.columns = history_data.columns.get_level_values(
+                            level
+                        )
                         break
             if "Close" in history_data.columns:
                 cp = history_data["Close"].iloc[-1]
@@ -267,6 +262,18 @@ class EnhancedEarningsScanner:
             tv = voldata.iloc[-1] if not voldata.empty else 0
             od = self.analyzer.compute_recommendation(ticker, history_data=history_data)
             if isinstance(od, dict) and "error" not in od:
+                required = [
+                    od.get("iv30_rv30"),
+                    od.get("term_slope"),
+                    od.get("term_structure"),
+                ]
+                if any(
+                    value is None
+                    or not pd.notna(value)
+                    or not float("-inf") < value < float("inf")
+                    for value in required
+                ):
+                    raise ValueError("Non-finite analysis metrics")
                 avb = od["avg_volume"]
                 ivcheck = od["iv30_rv30"] >= MIN_IV30_RV30_RATIO
                 slopecheck = od["term_slope"] <= MAX_TERM_SLOPE
@@ -279,57 +286,91 @@ class EnhancedEarningsScanner:
                 edate = earnings_date or "N/A"
                 try:
                     cal = st2.calendar if not earnings_date else None
-                    if not earnings_date and cal and "Earnings Date" in cal and cal["Earnings Date"]:
+                    if (
+                        not earnings_date
+                        and cal
+                        and "Earnings Date" in cal
+                        and cal["Earnings Date"]
+                    ):
                         edate = cal["Earnings Date"][0].strftime("%Y-%m-%d")
+                except YFRateLimitError as exc:
+                    stop_on_rate_limit(exc)
                 except Exception:
                     pass
 
                 etime = earnings_time or self.calendar_fetcher.get_earnings_time(ticker)
                 if earnings_time is None and etime == "Unknown" and edate != "N/A":
                     self.calendar_fetcher.fetch_earnings_data(edate)
-                    etime = earnings_time or self.calendar_fetcher.get_earnings_time(ticker)
+                    etime = earnings_time or self.calendar_fetcher.get_earnings_time(
+                        ticker
+                    )
 
                 return {
                     "ticker": ticker,
                     "earnings_date": edate,
-                    "current_price": cp,
-                    "market_cap": st2.info.get("marketCap", 0),
-                    "volume": tv,
+                    "current_price": float(od.get("underlying_price", cp)),
+                    "market_cap": info.get("marketCap", 0),
+                    "volume": int(tv),
                     "avg_volume": avb,
                     "avg_volume_value": od.get("avg_volume_value", 0),
                     "earnings_time": etime,
-                    "recommendation": rec,
+                    "recommendation": rec
+                    if od.get("expected_move", "N/A") != "N/A"
+                    else "Unavailable",
+                    "analysis_status": "ok"
+                    if od.get("expected_move", "N/A") != "N/A"
+                    else "unavailable",
+                    "analysis_error": None
+                    if od.get("expected_move", "N/A") != "N/A"
+                    else "Valid straddle quotes unavailable",
                     "expected_move": od.get("expected_move", "N/A"),
                     "atr14": od.get("atr14", 0),
                     "atr14_pct": od.get("atr14_pct", 0),
                     "iv30_rv30": od.get("iv30_rv30", 0),
                     "term_slope": od.get("term_slope", 0),
                     "term_structure": od.get("term_structure", 0),
-                    "historical_volatility": hv,
+                    "historical_volatility": float(hv)
+                    if pd.notna(hv) and float("-inf") < hv < float("inf")
+                    else None,
                     "current_iv": od.get("current_iv", None),
                     "iv_rank": od.get("iv_rank", None),
                 }
             return {
                 "ticker": ticker,
                 "earnings_date": earnings_date or "N/A",
-                "current_price": cp,
+                "current_price": float(cp),
                 "market_cap": 0,
-                "volume": tv,
-                "avg_volume": bool(voldata.rolling(IV_INTERPOLATION_DTE).mean().iloc[-1] >= MIN_AVG_VOLUME),
-                "avg_volume_value": voldata.rolling(IV_INTERPOLATION_DTE).mean().iloc[-1],
-                "analysis_error": od.get("error", "Options analysis unavailable") if isinstance(od, dict) else str(od),
-                "earnings_time": earnings_time or self.calendar_fetcher.get_earnings_time(ticker),
-                "recommendation": "Avoid",
+                "volume": int(tv),
+                "avg_volume": bool(
+                    voldata.rolling(IV_INTERPOLATION_DTE).mean().iloc[-1]
+                    >= MIN_AVG_VOLUME
+                ),
+                "avg_volume_value": (
+                    float(voldata.rolling(IV_INTERPOLATION_DTE).mean().iloc[-1])
+                    if pd.notna(voldata.rolling(IV_INTERPOLATION_DTE).mean().iloc[-1])
+                    else None
+                ),
+                "analysis_error": od.get("error", "Options analysis unavailable")
+                if isinstance(od, dict)
+                else str(od),
+                "earnings_time": earnings_time
+                or self.calendar_fetcher.get_earnings_time(ticker),
+                "recommendation": "Unavailable",
+                "analysis_status": "unavailable",
                 "expected_move": "N/A",
                 "atr14": 0,
                 "atr14_pct": 0,
-                "iv30_rv30": 0,
-                "term_slope": 0,
-                "term_structure": 0,
-                "historical_volatility": hv,
+                "iv30_rv30": None,
+                "term_slope": None,
+                "term_structure": None,
+                "historical_volatility": float(hv)
+                if pd.notna(hv) and float("-inf") < hv < float("inf")
+                else None,
                 "current_iv": None,
                 "iv_rank": None,
             }
+        except YFRateLimitError as exc:
+            stop_on_rate_limit(exc)
         except Exception as e:
             self.logger.error(f"Analyze error for {ticker}: {e}", exc_info=True)
             return None

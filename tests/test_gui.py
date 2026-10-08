@@ -15,7 +15,7 @@ class TestThreadSafety:
         assert "root.after" in source
         # The raw self.set_status should NOT appear outside root.after in the worker
         # Check that the worker's set_status is wrapped
-        assert "lambda: self.set_status(" in source
+        assert "lambda msg=message: self.set_status(msg)" in source
 
     def test_scan_worker_uses_root_after_for_set_status(self):
         """set_status calls inside the worker() closure should use root.after()."""

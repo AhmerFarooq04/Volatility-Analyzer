@@ -10,8 +10,8 @@ from tkinter import ttk, filedialog
 
 from earnings_calculator.chart import show_interactive_chart
 from earnings_calculator.options import OptionsAnalyzer
-from earnings_calculator.proxy import ProxyManager
 from earnings_calculator.scanner import EnhancedEarningsScanner, update_otc_tickers
+from earnings_calculator.monthly import MonthlyEarningsCache
 
 
 def _fmt(val, fmt_str, fallback="N/A"):
@@ -29,9 +29,7 @@ class EarningsTkApp:
         self.root = root
         self.root.title("Earnings Volatility Calculator (Tkinter)")
         self._set_icon()
-        self.proxy_manager = ProxyManager()
-        self.proxy_manager.proxy_enabled = False
-        self.analyzer = OptionsAnalyzer(self.proxy_manager)
+        self.analyzer = OptionsAnalyzer()
         self.scanner = EnhancedEarningsScanner(self.analyzer)
         self.raw_results: List[Dict] = []
         self.sort_orders: Dict[str, bool] = {}
@@ -49,27 +47,6 @@ class EarningsTkApp:
 
     def build_layout(self):
         from datetime import date
-
-        # ---------- Proxy Settings -----------
-        proxy_frame = ttk.LabelFrame(self.root, text="Proxy Settings", padding=2)
-        proxy_frame.pack(side="top", fill="x", padx=5, pady=(2, 0))
-        self.proxy_var = tk.BooleanVar(value=self.proxy_manager.proxy_enabled)
-        cb = ttk.Checkbutton(
-            proxy_frame,
-            text="Enable Proxy",
-            variable=self.proxy_var,
-            command=self.on_toggle_proxy,
-        )
-        cb.pack(side="left", padx=5, pady=0)
-        btn_proxy_update = ttk.Button(
-            proxy_frame, text="Update Proxies", command=self.on_update_proxies
-        )
-        btn_proxy_update.pack(side="left", padx=5, pady=0)
-        self.lbl_proxy_status = ttk.Label(
-            proxy_frame,
-            text="Disabled (0 proxies)",
-        )
-        self.lbl_proxy_status.pack(side="left", padx=5, pady=0)
 
         # ---------- Single Stock Analysis -----------
         single_frame = ttk.Frame(self.root, padding=2)
@@ -109,6 +86,9 @@ class EarningsTkApp:
         ttk.Button(
             scan_frame, text="Scan", command=self.on_scan,
         ).pack(side="left", padx=5, pady=0)
+
+        ttk.Button(scan_frame, text="Refresh Monthly CSV", command=self.on_refresh_monthly).pack(
+            side="left", padx=5)
 
         # ============ Filters + Threshold Label =============
         filter_and_threshold_frame = ttk.Frame(self.root, padding=2)
@@ -248,58 +228,6 @@ class EarningsTkApp:
         )
         self.progress_bar.pack(side="right", padx=10, pady=0)
 
-    # -------- Proxy Handlers --------
-    def on_toggle_proxy(self):
-        self.proxy_manager.proxy_enabled = self.proxy_var.get()
-        self.update_proxy_status()
-
-    def on_update_proxies(self):
-        loading_win = tk.Toplevel(self.root)
-        loading_win.title("Updating Proxies")
-        loading_win.geometry("300x150")
-        ttk.Label(loading_win, text="Fetching and validating proxies...").pack(
-            pady=10
-        )
-        pb = ttk.Progressbar(loading_win, mode="indeterminate")
-        pb.pack(pady=10, padx=20, fill="x")
-        pb.start(10)
-        cancel_btn = ttk.Button(
-            loading_win,
-            text="Cancel (keep found)",
-            command=self.proxy_manager.cancel_validation,
-        )
-        cancel_btn.pack(pady=5)
-
-        def progress_callback(msg):
-            print(msg)
-            self.root.after(0, lambda: self.set_status(msg))
-
-        def update_task():
-            try:
-                self.proxy_manager.build_valid_proxy_pool(
-                    max_proxies=50,
-                    concurrency=20,
-                    progress_callback=progress_callback,
-                )
-                self.root.after(0, lambda: self.update_proxy_status())
-                self.root.after(0, lambda: self.set_status("Proxies updated."))
-            except Exception as e:
-                self.root.after(
-                    0, lambda msg=str(e): self.set_status(f"Failed to update proxies: {msg}")
-                )
-            finally:
-                self.root.after(0, lambda: pb.stop())
-                self.root.after(0, lambda: loading_win.destroy())
-
-        threading.Thread(target=update_task, daemon=True).start()
-
-    def update_proxy_status(self):
-        if self.proxy_manager.proxy_enabled:
-            c = len(self.proxy_manager.proxies)
-            self.lbl_proxy_status.config(text=f"Enabled ({c} proxies)")
-        else:
-            self.lbl_proxy_status.config(text="Disabled (0 proxies)")
-
     # -------- Single Stock Analysis --------
     def on_analyze_stock(self):
         ticker = self.entry_symbol.get().strip().upper()
@@ -311,15 +239,30 @@ class EarningsTkApp:
         self.raw_results.clear()
 
         def worker():
-            hist_map = self.scanner.batch_download_history([ticker])
-            r = self.scanner.analyze_stock(
-                ticker, hist_map.get(ticker), skip_otc_check=True
-            )
+            try:
+                hist_map = self.scanner.batch_download_history([ticker])
+                r = self.scanner.analyze_stock(ticker, hist_map.get(ticker), skip_otc_check=True)
+            except Exception as exc:
+                self.root.after(0, lambda msg=str(exc): self.set_status(f"Analysis stopped: {msg}"))
+                return
             if r:
                 self.raw_results = [r]
             self.root.after(0, self.fill_table)
-            self.root.after(0, lambda: self.set_status("Single stock analysis complete."))
+            message = (f"Analysis unavailable: {r['analysis_error']}" if r and r.get("analysis_error")
+                       else "Single stock analysis complete." if r else "Analysis unavailable; check the log.")
+            self.root.after(0, lambda msg=message: self.set_status(msg))
 
+        threading.Thread(target=worker, daemon=True).start()
+
+    def on_refresh_monthly(self):
+        self.set_status("Building monthly earnings CSV with paced requests...")
+        def worker():
+            try:
+                path = MonthlyEarningsCache().ensure_current()
+                message = f"Monthly CSV ready: {path.name}"
+            except Exception as exc:
+                message = f"Monthly CSV paused or failed: {exc}"
+            self.root.after(0, lambda msg=message: self.set_status(msg))
         threading.Thread(target=worker, daemon=True).start()
 
     # -------- Earnings Scan --------
@@ -549,7 +492,7 @@ class EarningsTkApp:
         if not row_vals:
             return
         ticker = row_vals[0]
-        show_interactive_chart(ticker, self.analyzer.session_manager)
+        show_interactive_chart(ticker)
 
     # -------- Export CSV --------
     def on_export_csv(self):

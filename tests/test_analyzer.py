@@ -168,14 +168,13 @@ class TestFilterDates:
         assert today.strftime("%Y-%m-%d") not in result
         assert len(result) == 2
 
-    def test_filter_dates_only_today_falls_back(self):
-        """If today is the only date, fall back to include it."""
+    def test_filter_dates_only_today_returns_empty(self):
+        """0-DTE is excluded even when no later expirations exist."""
         analyzer = OptionsAnalyzer()
         today = datetime.today().date()
         dates = [today.strftime("%Y-%m-%d")]
         result = analyzer.filter_dates(dates)
-        # Fallback: return the original list since filtering removes all
-        assert len(result) == 1
+        assert result == []
 
 
 class TestGetCurrentPrice:
@@ -235,7 +234,7 @@ class TestComputeRecommendation:
         # had history called even if it did proceed
         mock_t.history.assert_not_called()
 
-    def test_uses_get_ticker_with_session(self):
+    def test_uses_get_ticker(self):
         """compute_recommendation should use get_ticker (which passes the session)."""
         analyzer = OptionsAnalyzer()
         mock_t = MagicMock()
@@ -246,7 +245,7 @@ class TestComputeRecommendation:
             mock_get.assert_called_once_with("AAPL")
 
     def test_iv_rank_returned(self):
-        """compute_recommendation returns iv_rank as float 0-100 when data is sufficient."""
+        """IV Rank stays unavailable without historical implied volatility."""
         analyzer = OptionsAnalyzer()
         # Build a 252-row OHLCV DataFrame for 1y of data
         rng = np.random.RandomState(42)
@@ -299,5 +298,4 @@ class TestComputeRecommendation:
         assert "error" not in result
         assert "iv_rank" in result
         iv_rank = result["iv_rank"]
-        assert iv_rank is not None
-        assert 0 <= iv_rank <= 100
+        assert iv_rank is None  # HV history cannot establish historical IV Rank.

@@ -1,28 +1,19 @@
 """Interactive candlestick chart rendering."""
 
-from typing import Optional
-
 import matplotlib
 matplotlib.use("TkAgg")
 import matplotlib.pyplot as plt
 import mplfinance as mpf
-import yfinance as yf
-
-from earnings_calculator.sessions import SessionManager
+from earnings_calculator.market_data import price_history
 
 
-def show_interactive_chart(
-    ticker: str, session_manager: Optional[SessionManager] = None
-):
-    """Show price history; yfinance manages its own compatible HTTP session.
 
-    The optional session_manager argument is retained for existing callers.
-    """
+def show_interactive_chart(ticker: str):
+    """Show completed daily price history using the shared paced Yahoo client."""
     try:
         from tkinter import messagebox
 
-        st = yf.Ticker(ticker)
-        hist = st.history(period="1y")
+        hist = price_history(ticker)
         if hist.empty:
             messagebox.showerror("Error", f"No historical data for {ticker}.")
             return

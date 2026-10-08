@@ -50,9 +50,11 @@ class TestRecommendationLogic:
         mock_ticker.info = {"exchange": "NMS", "marketCap": 1_000_000_000}
         mock_ticker.history.return_value = ohlcv_dataframe
 
-        with patch.object(analyzer, "get_ticker", return_value=mock_ticker), \
-             patch.object(analyzer, "compute_recommendation", return_value=od), \
-             patch.object(analyzer, "yang_zhang_volatility", return_value=0.25):
+        with (
+            patch.object(analyzer, "get_ticker", return_value=mock_ticker),
+            patch.object(analyzer, "compute_recommendation", return_value=od),
+            patch.object(analyzer, "yang_zhang_volatility", return_value=0.25),
+        ):
             result = scanner.analyze_stock("TEST", ohlcv_dataframe)
 
         assert result is not None
@@ -67,9 +69,11 @@ class TestRecommendationLogic:
         mock_ticker = MagicMock()
         mock_ticker.info = {"exchange": "NMS", "marketCap": 1_000_000_000}
 
-        with patch.object(analyzer, "get_ticker", return_value=mock_ticker), \
-             patch.object(analyzer, "compute_recommendation", return_value=od), \
-             patch.object(analyzer, "yang_zhang_volatility", return_value=0.25):
+        with (
+            patch.object(analyzer, "get_ticker", return_value=mock_ticker),
+            patch.object(analyzer, "compute_recommendation", return_value=od),
+            patch.object(analyzer, "yang_zhang_volatility", return_value=0.25),
+        ):
             result = scanner.analyze_stock("TEST", ohlcv_dataframe)
 
         assert result["recommendation"] == "Recommended"
@@ -83,9 +87,11 @@ class TestRecommendationLogic:
         mock_ticker = MagicMock()
         mock_ticker.info = {"exchange": "NMS", "marketCap": 1_000_000_000}
 
-        with patch.object(analyzer, "get_ticker", return_value=mock_ticker), \
-             patch.object(analyzer, "compute_recommendation", return_value=od), \
-             patch.object(analyzer, "yang_zhang_volatility", return_value=0.25):
+        with (
+            patch.object(analyzer, "get_ticker", return_value=mock_ticker),
+            patch.object(analyzer, "compute_recommendation", return_value=od),
+            patch.object(analyzer, "yang_zhang_volatility", return_value=0.25),
+        ):
             result = scanner.analyze_stock("TEST", ohlcv_dataframe)
 
         assert result["recommendation"] == "Recommended"
@@ -109,9 +115,11 @@ class TestAnalyzeStock:
         mock_ticker = MagicMock()
         mock_ticker.info = {"exchange": "PNK", "marketCap": 0}
 
-        with patch.object(analyzer, "get_ticker", return_value=mock_ticker), \
-             patch.object(analyzer, "compute_recommendation", return_value=od), \
-             patch.object(analyzer, "yang_zhang_volatility", return_value=0.20):
+        with (
+            patch.object(analyzer, "get_ticker", return_value=mock_ticker),
+            patch.object(analyzer, "compute_recommendation", return_value=od),
+            patch.object(analyzer, "yang_zhang_volatility", return_value=0.20),
+        ):
             result = scanner.analyze_stock(
                 "OTCSTOCK", ohlcv_dataframe, skip_otc_check=True
             )
@@ -140,9 +148,11 @@ class TestAnalyzeStock:
         mock_ticker = MagicMock()
         mock_ticker.info = {"exchange": "NMS", "marketCap": 1_000_000}
 
-        with patch.object(analyzer, "get_ticker", return_value=mock_ticker), \
-             patch.object(analyzer, "compute_recommendation", return_value=od), \
-             patch.object(analyzer, "yang_zhang_volatility", return_value=0.20):
+        with (
+            patch.object(analyzer, "get_ticker", return_value=mock_ticker),
+            patch.object(analyzer, "compute_recommendation", return_value=od),
+            patch.object(analyzer, "yang_zhang_volatility", return_value=0.20),
+        ):
             result = scanner.analyze_stock("TEST", data, skip_otc_check=True)
 
         assert result is not None
@@ -151,9 +161,7 @@ class TestAnalyzeStock:
         analyzer = OptionsAnalyzer()
         scanner = EnhancedEarningsScanner(analyzer)
 
-        with patch.object(
-            analyzer, "get_ticker", side_effect=Exception("API error")
-        ):
+        with patch.object(analyzer, "get_ticker", side_effect=Exception("API error")):
             result = scanner.analyze_stock("FAIL", None)
         assert result is None
 
@@ -163,16 +171,18 @@ class TestAnalyzeStock:
         mock_ticker = MagicMock()
         mock_ticker.info = {"exchange": "NMS", "marketCap": 0}
 
-        with patch.object(analyzer, "get_ticker", return_value=mock_ticker), \
-             patch.object(
-                 analyzer,
-                 "compute_recommendation",
-                 return_value={"error": "No options"},
-             ), \
-             patch.object(analyzer, "yang_zhang_volatility", return_value=0.20):
+        with (
+            patch.object(analyzer, "get_ticker", return_value=mock_ticker),
+            patch.object(
+                analyzer,
+                "compute_recommendation",
+                return_value={"error": "No options"},
+            ),
+            patch.object(analyzer, "yang_zhang_volatility", return_value=0.20),
+        ):
             result = scanner.analyze_stock("NOOPT", ohlcv_dataframe)
 
-        assert result["recommendation"] == "Avoid"
+        assert result["recommendation"] == "Unavailable"
 
 
 class TestAnalyzeStockPassesHistory:
@@ -185,11 +195,13 @@ class TestAnalyzeStockPassesHistory:
         mock_ticker = MagicMock()
         mock_ticker.info = {"exchange": "NMS", "marketCap": 1_000_000_000}
 
-        with patch.object(analyzer, "get_ticker", return_value=mock_ticker), \
-             patch.object(
-                 analyzer, "compute_recommendation", return_value=od
-             ) as mock_rec, \
-             patch.object(analyzer, "yang_zhang_volatility", return_value=0.25):
+        with (
+            patch.object(analyzer, "get_ticker", return_value=mock_ticker),
+            patch.object(
+                analyzer, "compute_recommendation", return_value=od
+            ) as mock_rec,
+            patch.object(analyzer, "yang_zhang_volatility", return_value=0.25),
+        ):
             scanner.analyze_stock("TEST", ohlcv_dataframe)
 
         # Verify history_data kwarg was passed through
@@ -213,7 +225,7 @@ class TestScanEarningsDateRange:
         scanner.scan_earnings_stocks = MagicMock(side_effect=fake_scan)
 
         start = datetime(2026, 2, 2)  # Monday
-        end = datetime(2026, 2, 6)    # Friday
+        end = datetime(2026, 2, 6)  # Friday
         results = scanner.scan_earnings_date_range(start, end)
 
         assert len(results) == 5
@@ -257,7 +269,7 @@ class TestScanEarningsDateRange:
 
 
 class TestBatchDownloadHistory:
-    @patch("earnings_calculator.scanner.yf.download")
+    @patch("earnings_calculator.scanner.price_history")
     def test_single_ticker(self, mock_download, ohlcv_dataframe):
         analyzer = OptionsAnalyzer()
         scanner = EnhancedEarningsScanner(analyzer)
@@ -265,7 +277,7 @@ class TestBatchDownloadHistory:
         result = scanner.batch_download_history(["AAPL"])
         assert "AAPL" in result
 
-    @patch("earnings_calculator.scanner.yf.download")
+    @patch("earnings_calculator.scanner.price_history")
     def test_returns_empty_on_error(self, mock_download):
         analyzer = OptionsAnalyzer()
         scanner = EnhancedEarningsScanner(analyzer)
@@ -277,6 +289,7 @@ class TestBatchDownloadHistory:
 class TestOvernightScan:
     def test_calendar_window_is_evening_then_next_morning(self):
         from datetime import datetime
+
         scanner = EnhancedEarningsScanner(OptionsAnalyzer())
         scanner.scan_earnings_stocks = MagicMock(return_value=[])
         progress = []
@@ -292,23 +305,86 @@ class TestOvernightScan:
 
     def test_volume_filter_runs_before_options(self, ohlcv_dataframe):
         from datetime import datetime
+
         scanner = EnhancedEarningsScanner(OptionsAnalyzer())
-        scanner.calendar_fetcher.fetch_earnings_data = MagicMock(return_value=["PASS", "LOW", "AM", "UNKNOWN"])
+        scanner.calendar_fetcher.fetch_earnings_data = MagicMock(
+            return_value=["PASS", "LOW", "AM", "UNKNOWN"]
+        )
         scanner.calendar_fetcher.get_earnings_time = MagicMock(
-            side_effect=lambda ticker, date: {"PASS": "Post Market", "LOW": "Post Market",
-                                            "AM": "Pre Market", "UNKNOWN": "Unknown"}[ticker])
+            side_effect=lambda ticker, date: {
+                "PASS": "Post Market",
+                "LOW": "Post Market",
+                "AM": "Pre Market",
+                "UNKNOWN": "Unknown",
+            }[ticker]
+        )
         liquid = ohlcv_dataframe.copy()
         liquid["Volume"] = 1_500_000
         low = liquid.copy()
         low["Volume"] = 1_499_999
-        scanner.batch_download_history = MagicMock(return_value={"PASS": liquid, "LOW": low})
-        scanner.analyze_stock = MagicMock(return_value={"ticker": "PASS", "recommendation": "Recommended"})
+        scanner.batch_download_history = MagicMock(
+            side_effect=lambda tickers: {
+                ticker: {"PASS": liquid, "LOW": low}[ticker] for ticker in tickers
+            }
+        )
+        scanner.analyze_stock = MagicMock(
+            return_value={"ticker": "PASS", "recommendation": "Recommended"}
+        )
         progress = []
-        result = scanner.scan_earnings_stocks(datetime(2026, 10, 8), progress.append, "Post Market")
+        result = scanner.scan_earnings_stocks(
+            datetime(2026, 10, 8), progress.append, "Post Market"
+        )
         assert len(result) == 1
-        assert scanner.batch_download_history.call_args.args[0] == ["PASS", "LOW"]
+        assert [
+            call.args[0] for call in scanner.batch_download_history.call_args_list
+        ] == [["PASS"], ["LOW"]]
         scanner.analyze_stock.assert_called_once()
         assert scanner.analyze_stock.call_args.args[0] == "PASS"
         assert scanner.analyze_stock.call_args.kwargs == {
-            "earnings_date": "2026-10-08", "earnings_time": "Post Market"}
+            "earnings_date": "2026-10-08",
+            "earnings_time": "Post Market",
+        }
         assert progress[-1] == 100
+
+
+def test_scan_stops_entire_batch_on_rate_limit():
+    from datetime import datetime
+    from earnings_calculator.market_data import DataRequestPaused
+
+    scanner = EnhancedEarningsScanner(OptionsAnalyzer())
+    scanner.calendar_fetcher.fetch_earnings_data = MagicMock(
+        return_value=["FIRST", "SECOND"]
+    )
+    scanner.calendar_fetcher.get_earnings_time = MagicMock(return_value="Post Market")
+    with patch(
+        "earnings_calculator.scanner.price_history",
+        side_effect=DataRequestPaused("paused", 123),
+    ) as history:
+        with pytest.raises(DataRequestPaused):
+            scanner.scan_earnings_stocks(datetime(2026, 10, 8))
+    assert history.call_count == 1
+
+
+@pytest.mark.parametrize("hv", [float("nan"), float("inf"), 0.0])
+def test_unavailable_analysis_is_strict_json_safe(hv, ohlcv_dataframe):
+    import json
+
+    analyzer = OptionsAnalyzer()
+    scanner = EnhancedEarningsScanner(analyzer)
+    ticker = MagicMock()
+    ticker.info = {"exchange": "NMS"}
+    with (
+        patch.object(analyzer, "get_ticker", return_value=ticker),
+        patch.object(
+            analyzer, "compute_recommendation", return_value={"error": "No valid data"}
+        ),
+        patch.object(analyzer, "yang_zhang_volatility", return_value=hv),
+    ):
+        result = scanner.analyze_stock(
+            "TEST", ohlcv_dataframe.iloc[-29:], skip_otc_check=True
+        )
+    assert result["analysis_status"] == "unavailable"
+    assert result["recommendation"] == "Unavailable"
+    assert result["avg_volume_value"] is None
+    assert result["iv30_rv30"] is None
+    json.dumps(result, allow_nan=False)
