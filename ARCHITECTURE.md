@@ -3,7 +3,8 @@
 The installed application lives in `src/earnings_calculator`. The console
 command `earnings-calculator` and `python -m earnings_calculator` both launch
 `gui.main()`. `src/Legacy` and `src/Experimental` contain reference scripts;
-they are preserved but are not part of the installed package.
+they are preserved but are not part of the installed package. Obsolete proxy
+experiments and the replaced Investing.com calendar probe have been removed.
 
 ## Runtime modules
 
